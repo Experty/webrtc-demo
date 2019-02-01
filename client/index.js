@@ -48,6 +48,10 @@ let remoteIce = []
 let remoteSdp = null
 let peerConnection = null
 let localStream = null
+let sendVideo = true
+let sendAudio = true
+let sender = null
+let audioSender = null
 
 /// Create view object
 let view = {
@@ -61,12 +65,15 @@ let view = {
   roomName: document.getElementById('roomName'),
   joinButton: document.getElementById('joinButton'),
   videoContainer: document.getElementById('videoContainer'),
-  video: document.getElementById('video'),
+  localVideo: document.getElementById('localVideo'),
+  remoteVideo: document.getElementById('remoteVideo'),
   status: document.getElementById('status'),
   inRoom: document.getElementById('inRoom'),
   inRoomText: document.getElementById('inRoomText'),
   exitRoom: document.getElementById('exitRoom'),
   exitRoom2: document.getElementById('exitRoom2'),
+  toggleVideo: document.getElementById('toggleVideo'),
+  toggleAudio: document.getElementById('toggleAudio'),
 
   /// Function that hide all main content elements
   hideAll() {
@@ -117,12 +124,19 @@ let view = {
   },
 
   /// Show video
-  showVideo(url) {
+  showVideo(e) {
     this.hideAll()
-    this.videoContainer.style.display = ''
-    this.video.srcObject = url
-    this.video.play()
+    // reset srcObject to work around minor bugs in Chrome and Edge.
+    console.log('gotRemoteStream', e.track, e.streams[0]);
+    try {
+    this.videoContainer.style.display = '';
+    this.remoteVideo.srcObject = null;
+    this.remoteVideo.srcObject = e.streams[0];
+    this.remoteVideo.play();
     this.status.innerText = 'Connected.'
+  } catch (e) {
+    console.error(e)
+  }
   }
 }
 
@@ -147,6 +161,84 @@ function sendOffer() {
   )
 }
 
+function upgrade() {
+  const config = {
+    audio: true,
+    video: sendVideo
+  }
+
+  const localVideoTracks = localStream.getVideoTracks();
+  // localVideoTracks.forEach(videoTrack => {
+  //   videoTrack.stop();
+  //   localStream.removeTrack(videoTrack);
+  // });
+
+  // if (localVideoTracks.length === 0) {
+  navigator.mediaDevices
+    .getUserMedia(config)
+    .then(stream => {
+      sendVideo = !sendVideo
+
+      const videoTracks = stream.getVideoTracks();
+      if (videoTracks.length > 0) {
+        console.log(`Using video device: ${videoTracks[0].label}`);
+        localStream.addTrack(videoTracks[0]);
+        // localStream = stream;
+        view.localVideo.srcObject = null;
+        view.localVideo.srcObject = localStream;
+        view.localVideo.play();
+        // peerConnection.addStream(localStream)
+        sender = peerConnection.addTrack(videoTracks[0], localStream);
+      } else {
+        localVideoTracks.forEach(videoTrack => {
+          videoTrack.stop();
+          localStream.removeTrack(videoTrack)
+          peerConnection.removeTrack(sender);
+        });
+      }
+
+      return sendOffer();
+    })
+  // } else {
+  //   localVideoTracks.forEach(videoTrack => {
+  //     console.log(videoTrack)
+  //     videoTrack.enabled = sendVideo
+  //   });
+  //   sendVideo = !sendVideo
+  // }
+}
+
+function toggleAudio() {
+  console.log(sendAudio)
+  // const config = {
+  //   audio: sendAudio,
+  //   video: sendVideo
+  // }
+
+  // const localAudioTracks = localStream.getAudioTracks();
+
+  // navigator.mediaDevices
+  //   .getUserMedia(config)
+  //   .then(stream => {
+  //     sendAudio = !sendAudio
+
+  //     const audioTracks = stream.getAudioTracks();
+  //     if (audioTracks.length > 0) {
+  //       console.log(`Using audio device: ${audioTracks[0].label}`);
+  //       localStream.addTrack(audioTracks[0]);
+  //       audioSender = peerConnection.addTrack(audioTracks[0], localStream);
+  //     } else {
+  //       localAudioTracks.forEach(audioTrack => {
+  //         audioTrack.stop();
+  //         localStream.removeTrack(audioTrack)
+  //         peerConnection.removeTrack(audioSender);
+  //       });
+  //     }
+
+  //     return sendOffer();
+  //   })
+}
+
 function resetWebRTC() {
   console.log("RESET WEBRTC")
   peerConnection = null
@@ -157,10 +249,16 @@ function resetWebRTC() {
   peerConnection.onicecandidate = function (evt) {
     dao.request(['room', 'addIce'], roomName, evt.candidate)
   }
-  peerConnection.onaddstream = function (evt) {
-    view.showVideo(evt.stream)
+  peerConnection.ontrack = evt => {
+    console.log('ON TRACK')
+    view.showVideo(evt)
   }
-  peerConnection.addStream(localStream)
+  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  // peerConnection.onaddstream = function (evt) {
+  //   console.log('add stream')
+  //   view.showVideo(evt.stream)
+  // }
+  // peerConnection.addStream(localStream)
   for(let candidate of remoteIce) {
     if(candidate) peerConnection.addIceCandidate(candidate)
   }
@@ -174,10 +272,11 @@ function resetWebRTC() {
 const sdpObserver = {
   set(sdp) { // Reaction to sdp changes
     if(sdp) {
-      view.showInRoom("Connecting to other user", "Please wait.")
+      // view.showInRoom("Connecting to other user", "Please wait.")
       if(!peerConnection) resetWebRTC()
+      console.log('SDP OBSERVER', sdp, calling)
       peerConnection.setRemoteDescription(new RTCSessionDescription(sdp))
-      if(!calling) sendAnswer()
+      if(sdp.type === 'offer') sendAnswer()
     }
   }
 }
@@ -242,6 +341,13 @@ function exitRoom() {
   remoteIce = []
   remoteSdp = null
   calling = undefined
+
+  const videoTracks = localStream.getVideoTracks();
+  videoTracks.forEach(track => {
+    track.stop();
+    localStream.removeTrack(track);
+  });
+
   dao.request(["room", "exitRoom"], roomName).then(ok => {
     view.showRoomInput()
   })
@@ -255,6 +361,8 @@ view.roomInputContainer.addEventListener("submit", (ev) => {
 
 view.exitRoom.addEventListener("click", (ev) => exitRoom())
 view.exitRoom2.addEventListener("click", (ev) => exitRoom())
+view.toggleVideo.addEventListener("click", (ev) => upgrade())
+view.toggleAudio.addEventListener("click", (ev) => toggleAudio())
 
 view.showLoading("Waiting for video input.", "Please connect camera.")
 
