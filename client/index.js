@@ -48,10 +48,8 @@ let remoteIce = []
 let remoteSdp = null
 let peerConnection = null
 let localStream = null
-let sendVideo = true
-let sendAudio = true
-let sender = null
-let audioSender = null
+let muteAudio = false
+let videoTrackSender = null
 
 /// Create view object
 let view = {
@@ -157,55 +155,43 @@ function sendOffer() {
   )
 }
 
-function upgrade() {
-  const config = {
-    audio: true,
-    video: sendVideo
-  }
-
-  const localVideoTracks = localStream.getVideoTracks();
-  // localVideoTracks.forEach(videoTrack => {
-  //   videoTrack.stop();
-  //   localStream.removeTrack(videoTrack);
-  // });
-
-  // if (localVideoTracks.length === 0) {
-  navigator.mediaDevices
-    .getUserMedia(config)
+function toggleVideo() {
+  if (videoTrackSender) { // VIDEO OFF
+    const localVideoTracks = localStream.getVideoTracks();
+    localVideoTracks.forEach(videoTrack => {
+      videoTrack.stop();
+      localStream.removeTrack(videoTrack)
+      peerConnection.removeTrack(videoTrackSender);
+      videoTrackSender = null;
+      view.toggleVideo.value = `Video ${videoTrackSender ? 'on' : 'off'}`
+    });
+    return sendOffer(); // RE-NEGOTIATE
+  } else { // VIDEO ON
+    navigator.mediaDevices
+    .getUserMedia({ video: true })
     .then(stream => {
-      sendVideo = !sendVideo
-
       const videoTracks = stream.getVideoTracks();
       if (videoTracks.length > 0) {
         console.log(`Using video device: ${videoTracks[0].label}`);
         localStream.addTrack(videoTracks[0]);
-        // localStream = stream;
         view.localVideo.srcObject = null;
         view.localVideo.srcObject = localStream;
         view.localVideo.play();
-        // peerConnection.addStream(localStream)
-        sender = peerConnection.addTrack(videoTracks[0], localStream);
-      } else {
-        localVideoTracks.forEach(videoTrack => {
-          videoTrack.stop();
-          localStream.removeTrack(videoTrack)
-          peerConnection.removeTrack(sender);
-        });
+        videoTrackSender = peerConnection.addTrack(videoTracks[0], localStream);
+        view.toggleVideo.value = `Video ${videoTrackSender ? 'on' : 'off'}`
       }
-
-      return sendOffer();
+      return sendOffer(); // RE-NEGOTIATE
     })
-  // } else {
-  //   localVideoTracks.forEach(videoTrack => {
-  //     console.log(videoTrack)
-  //     videoTrack.enabled = sendVideo
-  //   });
-  //   sendVideo = !sendVideo
-  // }
+  }
 }
 
 function toggleAudio() {
   const localAudioTracks = localStream.getAudioTracks();
+  localAudioTracks.forEach(audioTrack => {
+    audioTrack.enabled = muteAudio
+  })
+  muteAudio = !muteAudio
+  view.toggleAudio.value = `Audio ${muteAudio ? 'off' : 'on'}`
 }
 
 function resetWebRTC() {
@@ -304,18 +290,27 @@ function exitRoom() {
   dao.observable(['room', 'otherUserSdp', roomName]).unobserve(sdpObserver)
   view.showLoading("Exiting room "+roomName, "Please wait.")
   if(peerConnection) {
+    console.log('PEER CONNECTION CLOSE')
     peerConnection.close()
     peerConnection = null
   }
+  // RESET VARIABLES
+  myIp = null
+  calling = undefined
   remoteIce = []
   remoteSdp = null
-  calling = undefined
+  muteAudio = false
+  videoTrackSender = null
 
   const videoTracks = localStream.getVideoTracks();
-  videoTracks.forEach(track => {
-    track.stop();
-    localStream.removeTrack(track);
-  });
+  if (videoTracks.length > 0) {
+    videoTracks.forEach(track => {
+      track.stop();
+      localStream.removeTrack(track);
+    });
+    view.localVideo.srcObject = undefined;
+    view.remoteVideo.srcObject = undefined;
+  }
 
   dao.request(["room", "exitRoom"], roomName).then(ok => {
     view.showRoomInput()
@@ -330,7 +325,7 @@ view.roomInputContainer.addEventListener("submit", (ev) => {
 
 view.exitRoom.addEventListener("click", (ev) => exitRoom())
 view.exitRoom2.addEventListener("click", (ev) => exitRoom())
-view.toggleVideo.addEventListener("click", (ev) => upgrade())
+view.toggleVideo.addEventListener("click", (ev) => toggleVideo())
 view.toggleAudio.addEventListener("click", (ev) => toggleAudio())
 
 view.showLoading("Waiting for video input.", "Please connect camera.")
@@ -345,7 +340,8 @@ else if(navigator.getUserMedia) userMediaPromise = new Promise(function(resolve,
 userMediaPromise
   .then(function(stream) {
     localStream = stream
-    //view.showVideo(URL.createObjectURL(stream))
+    view.toggleAudio.value = `Audio ${muteAudio ? 'off' : 'on'}`
+    view.toggleVideo.value = `Video ${videoTrackSender ? 'on' : 'off'}`
     view.showRoomInput()
   })
   .catch(function(err) {
