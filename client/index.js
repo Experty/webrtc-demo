@@ -128,15 +128,11 @@ let view = {
     this.hideAll()
     // reset srcObject to work around minor bugs in Chrome and Edge.
     console.log('gotRemoteStream', e.track, e.streams[0]);
-    try {
     this.videoContainer.style.display = '';
     this.remoteVideo.srcObject = null;
     this.remoteVideo.srcObject = e.streams[0];
     this.remoteVideo.play();
     this.status.innerText = 'Connected.'
-  } catch (e) {
-    console.error(e)
-  }
   }
 }
 
@@ -209,34 +205,7 @@ function upgrade() {
 }
 
 function toggleAudio() {
-  console.log(sendAudio)
-  // const config = {
-  //   audio: sendAudio,
-  //   video: sendVideo
-  // }
-
-  // const localAudioTracks = localStream.getAudioTracks();
-
-  // navigator.mediaDevices
-  //   .getUserMedia(config)
-  //   .then(stream => {
-  //     sendAudio = !sendAudio
-
-  //     const audioTracks = stream.getAudioTracks();
-  //     if (audioTracks.length > 0) {
-  //       console.log(`Using audio device: ${audioTracks[0].label}`);
-  //       localStream.addTrack(audioTracks[0]);
-  //       audioSender = peerConnection.addTrack(audioTracks[0], localStream);
-  //     } else {
-  //       localAudioTracks.forEach(audioTrack => {
-  //         audioTrack.stop();
-  //         localStream.removeTrack(audioTrack)
-  //         peerConnection.removeTrack(audioSender);
-  //       });
-  //     }
-
-  //     return sendOffer();
-  //   })
+  const localAudioTracks = localStream.getAudioTracks();
 }
 
 function resetWebRTC() {
