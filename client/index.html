@@ -34,8 +34,13 @@
     </form>
 
     <div class="main" id="videoContainer" style="display: none">
-      <video id="video"></video>
-      <input id="exitRoom" type="button" value="Exit Room" />
+      <video id="localVideo" playsinline autoplay muted></video>
+      <video id="remoteVideo" playsinline autoplay></video>
+      <div class="buttons" id="buttons">
+        <input id="exitRoom" type="button" value="Exit Room" />
+        <input id="toggleVideo" type="button" value="Video" />
+        <input id="toggleAudio" type="button" value="Audio" />
+      </div>
     </div>
 
     <div class="bottomBar">

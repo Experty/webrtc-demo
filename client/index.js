@@ -48,6 +48,8 @@ let remoteIce = []
 let remoteSdp = null
 let peerConnection = null
 let localStream = null
+let muteAudio = false
+let videoTrackSender = null
 
 /// Create view object
 let view = {
@@ -61,12 +63,15 @@ let view = {
   roomName: document.getElementById('roomName'),
   joinButton: document.getElementById('joinButton'),
   videoContainer: document.getElementById('videoContainer'),
-  video: document.getElementById('video'),
+  localVideo: document.getElementById('localVideo'),
+  remoteVideo: document.getElementById('remoteVideo'),
   status: document.getElementById('status'),
   inRoom: document.getElementById('inRoom'),
   inRoomText: document.getElementById('inRoomText'),
   exitRoom: document.getElementById('exitRoom'),
   exitRoom2: document.getElementById('exitRoom2'),
+  toggleVideo: document.getElementById('toggleVideo'),
+  toggleAudio: document.getElementById('toggleAudio'),
 
   /// Function that hide all main content elements
   hideAll() {
@@ -117,11 +122,14 @@ let view = {
   },
 
   /// Show video
-  showVideo(url) {
+  showVideo(e) {
     this.hideAll()
-    this.videoContainer.style.display = ''
-    this.video.srcObject = url
-    this.video.play()
+    // reset srcObject to work around minor bugs in Chrome and Edge.
+    console.log('gotRemoteStream', e.track, e.streams[0]);
+    this.videoContainer.style.display = '';
+    this.remoteVideo.srcObject = null;
+    this.remoteVideo.srcObject = e.streams[0];
+    this.remoteVideo.play();
     this.status.innerText = 'Connected.'
   }
 }
@@ -147,6 +155,45 @@ function sendOffer() {
   )
 }
 
+function toggleVideo() {
+  if (videoTrackSender) { // VIDEO OFF
+    const localVideoTracks = localStream.getVideoTracks();
+    localVideoTracks.forEach(videoTrack => {
+      videoTrack.stop();
+      localStream.removeTrack(videoTrack)
+      peerConnection.removeTrack(videoTrackSender);
+      videoTrackSender = null;
+      view.toggleVideo.value = `Video ${videoTrackSender ? 'on' : 'off'}`
+    });
+    return sendOffer(); // RE-NEGOTIATE
+  } else { // VIDEO ON
+    navigator.mediaDevices
+    .getUserMedia({ video: true })
+    .then(stream => {
+      const videoTracks = stream.getVideoTracks();
+      if (videoTracks.length > 0) {
+        console.log(`Using video device: ${videoTracks[0].label}`);
+        localStream.addTrack(videoTracks[0]);
+        view.localVideo.srcObject = null;
+        view.localVideo.srcObject = localStream;
+        view.localVideo.play();
+        videoTrackSender = peerConnection.addTrack(videoTracks[0], localStream);
+        view.toggleVideo.value = `Video ${videoTrackSender ? 'on' : 'off'}`
+      }
+      return sendOffer(); // RE-NEGOTIATE
+    })
+  }
+}
+
+function toggleAudio() {
+  const localAudioTracks = localStream.getAudioTracks();
+  localAudioTracks.forEach(audioTrack => {
+    audioTrack.enabled = muteAudio
+  })
+  muteAudio = !muteAudio
+  view.toggleAudio.value = `Audio ${muteAudio ? 'off' : 'on'}`
+}
+
 function resetWebRTC() {
   console.log("RESET WEBRTC")
   peerConnection = null
@@ -157,10 +204,16 @@ function resetWebRTC() {
   peerConnection.onicecandidate = function (evt) {
     dao.request(['room', 'addIce'], roomName, evt.candidate)
   }
-  peerConnection.onaddstream = function (evt) {
-    view.showVideo(evt.stream)
+  peerConnection.ontrack = evt => {
+    console.log('ON TRACK')
+    view.showVideo(evt)
   }
-  peerConnection.addStream(localStream)
+  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  // peerConnection.onaddstream = function (evt) {
+  //   console.log('add stream')
+  //   view.showVideo(evt.stream)
+  // }
+  // peerConnection.addStream(localStream)
   for(let candidate of remoteIce) {
     if(candidate) peerConnection.addIceCandidate(candidate)
   }
@@ -174,10 +227,11 @@ function resetWebRTC() {
 const sdpObserver = {
   set(sdp) { // Reaction to sdp changes
     if(sdp) {
-      view.showInRoom("Connecting to other user", "Please wait.")
+      // view.showInRoom("Connecting to other user", "Please wait.")
       if(!peerConnection) resetWebRTC()
+      console.log('SDP OBSERVER', sdp, calling)
       peerConnection.setRemoteDescription(new RTCSessionDescription(sdp))
-      if(!calling) sendAnswer()
+      if(sdp.type === 'offer') sendAnswer()
     }
   }
 }
@@ -236,12 +290,28 @@ function exitRoom() {
   dao.observable(['room', 'otherUserSdp', roomName]).unobserve(sdpObserver)
   view.showLoading("Exiting room "+roomName, "Please wait.")
   if(peerConnection) {
+    console.log('PEER CONNECTION CLOSE')
     peerConnection.close()
     peerConnection = null
   }
+  // RESET VARIABLES
+  myIp = null
+  calling = undefined
   remoteIce = []
   remoteSdp = null
-  calling = undefined
+  muteAudio = false
+  videoTrackSender = null
+
+  const videoTracks = localStream.getVideoTracks();
+  if (videoTracks.length > 0) {
+    videoTracks.forEach(track => {
+      track.stop();
+      localStream.removeTrack(track);
+    });
+    view.localVideo.srcObject = undefined;
+    view.remoteVideo.srcObject = undefined;
+  }
+
   dao.request(["room", "exitRoom"], roomName).then(ok => {
     view.showRoomInput()
   })
@@ -255,6 +325,8 @@ view.roomInputContainer.addEventListener("submit", (ev) => {
 
 view.exitRoom.addEventListener("click", (ev) => exitRoom())
 view.exitRoom2.addEventListener("click", (ev) => exitRoom())
+view.toggleVideo.addEventListener("click", (ev) => toggleVideo())
+view.toggleAudio.addEventListener("click", (ev) => toggleAudio())
 
 view.showLoading("Waiting for video input.", "Please connect camera.")
 
@@ -268,7 +340,8 @@ else if(navigator.getUserMedia) userMediaPromise = new Promise(function(resolve,
 userMediaPromise
   .then(function(stream) {
     localStream = stream
-    //view.showVideo(URL.createObjectURL(stream))
+    view.toggleAudio.value = `Audio ${muteAudio ? 'off' : 'on'}`
+    view.toggleVideo.value = `Video ${videoTrackSender ? 'on' : 'off'}`
     view.showRoomInput()
   })
   .catch(function(err) {
